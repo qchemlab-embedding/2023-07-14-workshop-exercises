@@ -1,0 +1,29 @@
+Task GeometryOptimization
+ 
+System
+    Atoms
+       O     0.00000000       0.00000000       0.00000000
+       H     0.75757700       0.58613100       0.00000000
+       H    -0.75757700       0.58613100       0.00000000
+    End
+End
+
+Properties
+   NormalModes Yes
+End
+
+Engine ADF
+    Symmetry NoSym
+    basis
+        Type DZP
+        CreateOutput Yes
+    End
+    XC
+      HYBRID B3LYP
+    End
+    
+    Relativity
+       Formalism ZORA
+       Level Scalar
+    End
+EndEngine
