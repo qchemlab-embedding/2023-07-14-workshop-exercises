@@ -1,0 +1,105 @@
+import numpy as np
+
+#
+# general settings: set up environment
+#
+
+from pyadf import *
+if 'pyadfenv' not in globals():
+    from pyadf.Initialization import *
+
+DefaultJobRunner.instance = None
+job_runner_conf = JobRunnerConfiguration(conffile='/net/people/plgrid/plggosiao/jobs/pyadf/workshops/workshop_14july2023/simple/jobrunner.conf',
+                                         jobbasedir=pyadfenv.outdir)
+DefaultJobRunner(conf=job_runner_conf)
+
+#
+# general ADF settings
+#
+adf_settings = adfsettings()
+adf_settings.set_functional('PBE')                          # <--- we use PBE functional in all DFT calculations (for the exchange-correlation energy)
+adf_settings.set_ZORA (ZORA=True, SpinOrbit=False)          # <--- we use ZORA Hamiltonian that includes scalar relativistic effects (spin-orbit effects are neglected)
+adf_settings.ncycles=200
+adf_settings.set_occupations(['KEEPORBITALS '+str(adf_settings.ncycles)])
+adf_settings.set_integration(accint=8.0, acclist=[8.0, 8.0])
+
+basis = "DZP"  # <--- we use DZP basis set
+
+adf_sym_opts = ['NOSYM', 'NOSYMFIT', 'NUCLEARMODEL gaussian']
+adf_exc_opts = ['QTENS', 'ALLOW POSHOMO']
+sym_gen_opts = adf_sym_opts + adf_exc_opts
+fde_act_opts = {'FULLGRID' : '', 'GGAPOTXFD' : 'PBEX', 'GGAPOTCFD' : 'PBEC', 'TNAD' : 'PW91k', 'ENERGY' : ''}  # <--- we use PBE functional for the non-additive exchange-correlation energy (FDE calculations)
+fde_frz_opts = {}
+
+max_fnt_cycles = 15  # <--- we define the maximum number of freeze-and-thaw iterations
+fnt_act_opts = {'FULLGRID' : '', 'GGAPOTXFD' : 'PBEX', 'GGAPOTCFD' : 'PBEC', 'TNAD' : 'PW91k', 'ENERGY' : '', 'RELAXCYCLES': max_fnt_cycles }
+fnt_frz_opts = {"RELAX":""}
+
+
+
+#
+# define subsystems
+#
+geometries_dir = os.path.join(pyadfenv.outdir, 'coordinates')
+file_act = os.path.join (geometries_dir, 'h2o-1.xyz')
+file_env = os.path.join (geometries_dir, 'h2o-2.xyz')
+m_act = molecule(file_act)
+m_env = molecule(file_env)
+m_tot = m_act + m_env
+
+print(m_tot.print_coordinates())
+
+
+#
+# run single point calculations (optimize wavefunction)
+#
+# - on a supermolecule
+# - on each subsystem (no FDE)
+# note that we use the same settings in all cases
+#
+r_tot = adfsinglepointjob( m_tot, basis, core=None, options=adf_sym_opts, settings=adf_settings).run()
+r_env = adfsinglepointjob( m_env, basis, core=None, options=adf_sym_opts, settings=adf_settings).run()
+r_act = adfsinglepointjob( m_act, basis, core=None, options=adf_sym_opts, settings=adf_settings).run()
+
+#
+# run FDE calculations: 
+# single point calculations on the active "m_act" subsystem, with the other subsystem ("m_env") kept frozen
+#
+frags = [fragment(None,  [m_act]  ) ,
+         fragment(r_env, [m_env], isfrozen=True, fdeoptions=fde_frz_opts)]
+
+r_fde = adffragmentsjob(frags, basis, core=None, settings=adf_settings, fde=fde_act_opts, options=sym_gen_opts).run()
+
+#
+# run freeze-and-thaw calculation
+#
+frags = [ fragment(None,  [m_act]),
+          fragment(r_env, [m_env], isfrozen=True, fdeoptions=fnt_frz_opts) ]
+
+r_fnt = adffragmentsjob(frags, basis, settings=adf_settings, fde=fnt_act_opts, options=sym_gen_opts).run()
+
+
+
+# ------------------ collect results -----------------------------
+
+#
+# in single point calculations, ADF always calculates the dipole moment vector
+# so, without any additional calculations, we can compare this property for the four different setups used here:
+
+dipole_vect = r_act.get_dipole_vector()
+print("Dipole moment for an isolated h2o-1 molecule (in its dimer geometry): ", dipole_vect, np.linalg.norm(dipole_vect))
+
+dipole_vect = r_env.get_dipole_vector()
+print("Dipole moment for an isolated h2o-2 molecule (in its dimer geometry): ", dipole_vect, np.linalg.norm(dipole_vect))
+
+dipole_vect = r_tot.get_dipole_vector()
+print("Dipole moment for a supermolecular system (water dimer): ", dipole_vect, np.linalg.norm(dipole_vect))
+
+dipole_vect = r_fde.get_dipole_vector()
+print("Dipole moment for a h2o-1 molecule with the h2o-2 included as a frozen environment (in their dimer geometries; FDE calculations): ", dipole_vect, np.linalg.norm(dipole_vect))
+
+dipole_vect = r_fnt.get_dipole_vector()
+print("Dipole moment for a h2o-1 molecule with the h2o-2 included as an environment, both subsystems are relaxed in the freeze-and-thaw cycles (in their dimer geometries; FNT calculations): ", dipole_vect, np.linalg.norm(dipole_vect))
+
+
+

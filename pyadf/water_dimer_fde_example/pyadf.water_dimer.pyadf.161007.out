@@ -1,0 +1,465 @@
+
+ *************************************************************************************
+ *                                          
+ *  PyADF v1.1
+ *      Git version:  v1.2-9-gcd00eaf
+ *
+ *  PyADF - A Scripting Framework for Multiscale Quantum Chemistry.
+ *  Copyright (C) 2006-2021 by Christoph R. Jacob, Tobias Bergmann,
+ *  S. Maya Beyhan, Julia Brüggemann, Rosa E. Bulo, Thomas Dresselhaus,
+ *  Kevin Focke, Andre S. P. Gomes, Andreas Goetz, Michal Handzlik,
+ *  Karin Kiewisch, Moritz Klammler, Lars Ridder, Jetze Sikkema,
+ *  Lucas Visscher, and Mario Wolter.
+ *
+ *      PyADF is free software: you can redistribute it and/or modify
+ *      it under the terms of the GNU General Public License as published by
+ *      the Free Software Foundation, either version 3 of the License, or
+ *      (at your option) any later version.
+ *
+ *      PyADF is distributed in the hope that it will be useful,
+ *      but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *      GNU General Public License for more details.
+ *
+ *      You should have received a copy of the GNU General Public License
+ *      along with PyADF.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ *************************************************************************************
+
+ Directory of PyADF source:
+      /net/pr2/projects/plgrid/plggqcembed/devel/pyadf
+
+ Git version information:
+     Branch        :  master
+     Commit hash   :  cd00eaf
+     Commit author :  Christoph Jacob
+     Commit date   :  Mon Jul 17 15:36:51 2023 +0000
+
+ Directory of input file:
+      /net/people/plgrid/plggosiao/jobs/pyadf/workshops/workshop_14july2023/simple/sample_scripts
+
+ Directory of output files:
+      /net/people/plgrid/plggosiao/jobs/pyadf/workshops/workshop_14july2023/simple/sample_scripts
+
+ ----------------------------------------
+ PyADF input file:  /net/people/plgrid/plggosiao/jobs/pyadf/workshops/workshop_14july2023/simple/sample_scripts/water_dimer.pyadf
+
+import numpy as np
+ #
+ # general settings: set up environment
+ #
+ from pyadf import *
+ if 'pyadfenv' not in globals():
+     from pyadf.Initialization import *
+ DefaultJobRunner.instance = None
+ job_runner_conf = JobRunnerConfiguration(conffile='/net/people/plgrid/plggosiao/jobs/pyadf/workshops/workshop_14july2023/simple/jobrunner.conf',
+                                          jobbasedir=pyadfenv.outdir)
+ DefaultJobRunner(conf=job_runner_conf)
+ #
+ # general ADF settings
+ #
+ adf_settings = adfsettings()
+ adf_settings.set_functional('PBE')                          # <--- we use PBE functional in all DFT calculations (for the exchange-correlation energy)
+ adf_settings.set_ZORA (ZORA=True, SpinOrbit=False)          # <--- we use ZORA Hamiltonian that includes scalar relativistic effects (spin-orbit effects are neglected)
+ adf_settings.ncycles=200
+ adf_settings.set_occupations(['KEEPORBITALS '+str(adf_settings.ncycles)])
+ adf_settings.set_integration(accint=8.0, acclist=[8.0, 8.0])
+ basis = "DZP"  # <--- we use DZP basis set
+ adf_sym_opts = ['NOSYM', 'NOSYMFIT', 'NUCLEARMODEL gaussian']
+ adf_exc_opts = ['QTENS', 'ALLOW POSHOMO']
+ sym_gen_opts = adf_sym_opts + adf_exc_opts
+ fde_act_opts = {'FULLGRID' : '', 'GGAPOTXFD' : 'PBEX', 'GGAPOTCFD' : 'PBEC', 'TNAD' : 'PW91k', 'ENERGY' : ''}  # <--- we use PBE functional for the non-additive exchange-correlation energy (FDE calculations)
+ fde_frz_opts = {}
+ max_fnt_cycles = 15  # <--- we define the maximum number of freeze-and-thaw iterations
+ fnt_act_opts = {'FULLGRID' : '', 'GGAPOTXFD' : 'PBEX', 'GGAPOTCFD' : 'PBEC', 'TNAD' : 'PW91k', 'ENERGY' : '', 'RELAXCYCLES': max_fnt_cycles }
+ fnt_frz_opts = {"RELAX":""}
+ #
+ # define subsystems
+ #
+ geometries_dir = os.path.join(pyadfenv.outdir, 'coordinates')
+ file_act = os.path.join (geometries_dir, 'h2o-1.xyz')
+ file_env = os.path.join (geometries_dir, 'h2o-2.xyz')
+ m_act = molecule(file_act)
+ m_env = molecule(file_env)
+ m_tot = m_act + m_env
+ print(m_tot.print_coordinates())
+ #
+ # run single point calculations (optimize wavefunction)
+ #
+ # - on a supermolecule
+ # - on each subsystem (no FDE)
+ # note that we use the same settings in all cases
+ #
+ r_tot = adfsinglepointjob( m_tot, basis, core=None, options=adf_sym_opts, settings=adf_settings).run()
+ r_env = adfsinglepointjob( m_env, basis, core=None, options=adf_sym_opts, settings=adf_settings).run()
+ r_act = adfsinglepointjob( m_act, basis, core=None, options=adf_sym_opts, settings=adf_settings).run()
+ #
+ # run FDE calculations: 
+ # single point calculations on the active "m_act" subsystem, with the other subsystem ("m_env") kept frozen
+ #
+ frags = [fragment(None,  [m_act]  ) ,
+          fragment(r_env, [m_env], isfrozen=True, fdeoptions=fde_frz_opts)]
+ r_fde = adffragmentsjob(frags, basis, core=None, settings=adf_settings, fde=fde_act_opts, options=sym_gen_opts).run()
+ #
+ # run freeze-and-thaw calculation
+ #
+ frags = [ fragment(None,  [m_act]),
+           fragment(r_env, [m_env], isfrozen=True, fdeoptions=fnt_frz_opts) ]
+ r_fnt = adffragmentsjob(frags, basis, settings=adf_settings, fde=fnt_act_opts, options=sym_gen_opts).run()
+ # ------------------ collect results -----------------------------
+ #
+ # in single point calculations, ADF always calculates the dipole moment vector
+ # so, without any additional calculations, we can compare this property for the four different setups used here:
+ dipole_vect = r_act.get_dipole_vector()
+ print("Dipole moment for an isolated h2o-1 molecule (in its dimer geometry): ", dipole_vect, np.linalg.norm(dipole_vect))
+ dipole_vect = r_env.get_dipole_vector()
+ print("Dipole moment for an isolated h2o-2 molecule (in its dimer geometry): ", dipole_vect, np.linalg.norm(dipole_vect))
+ dipole_vect = r_tot.get_dipole_vector()
+ print("Dipole moment for a supermolecular system (water dimer): ", dipole_vect, np.linalg.norm(dipole_vect))
+ dipole_vect = r_fde.get_dipole_vector()
+ print("Dipole moment for a h2o-1 molecule with the h2o-2 included as a frozen environment (in their dimer geometries; FDE calculations): ", dipole_vect, np.linalg.norm(dipole_vect))
+ dipole_vect = r_fnt.get_dipole_vector()
+ print("Dipole moment for a h2o-1 molecule with the h2o-2 included as an environment, both subsystems are relaxed in the freeze-and-thaw cycles (in their dimer geometries; FNT calculations): ", dipole_vect, np.linalg.norm(dipole_vect))
+  ----------------------------------------
+
+ ----------------------------------------
+ Molecule class command line option:  None
+ Molecule class used:  <class 'pyadf.Molecule.OBFreeMolecule.OBFreeMolecule'>
+
+
+ ----------------------------------------
+JobRunner configuration read from file:  /net/people/plgrid/plggosiao/jobs/pyadf/workshops/workshop_14july2023/simple/sample_scripts/jobrunner.conf
+     default shell:  /bin/bash
+     env_modules_load:  {'scmjob': ['adf/2022.102'], 'diracjob': ['dirac/23.0-intel-2021b']}
+
+ **************************************************
+ Executing PyADF input ...
+
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+    4)        O        1.35062        0.11147        0.00000    
+    5)        H        1.68040       -0.37374       -0.75856    
+    6)        H        1.68040       -0.37374        0.75856    
+
+ --------------------------------------------------
+ Running ADF single point job
+
+   Molecule
+   ========
+
+  Cartesian coordinates: 
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+    4)        O        1.35062        0.11147        0.00000    
+    5)        H        1.68040       -0.37374       -0.75856    
+    6)        H        1.68040       -0.37374        0.75856    
+  Bonds: 
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -1.93426        0.76250        0.00000)
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -0.59968        0.04071        0.00000)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374        0.75856)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374       -0.75856)
+
+
+   Settings
+   ========
+
+   Relativistic options:  ZORA Scalar Relativistic 
+
+   XC functional   : GGA PBE
+   Integration     : accint 8.0    
+   SCF convergence : 1.0e-06 
+
+   TAPE21 will be saved
+
+
+   Options
+   =======
+
+   NOSYM
+   NOSYMFIT
+   NUCLEARMODEL gaussian
+
+   Output will be written to :  alloutput.161007.out
+
+ Running main job ...
+
+ Done with ADF single point job
+
+ Results file id is  0
+
+ --------------------------------------------------
+ Running ADF single point job
+
+   Molecule
+   ========
+
+  Cartesian coordinates: 
+    1)        O        1.35062        0.11147        0.00000    
+    2)        H        1.68040       -0.37374       -0.75856    
+    3)        H        1.68040       -0.37374        0.75856    
+  Bonds: 
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374        0.75856)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374       -0.75856)
+
+
+   Settings
+   ========
+
+   Relativistic options:  ZORA Scalar Relativistic 
+
+   XC functional   : GGA PBE
+   Integration     : accint 8.0    
+   SCF convergence : 1.0e-06 
+
+   TAPE21 will be saved
+
+
+   Options
+   =======
+
+   NOSYM
+   NOSYMFIT
+   NUCLEARMODEL gaussian
+
+   Output will be written to :  alloutput.161007.out
+
+ Running main job ...
+
+ Done with ADF single point job
+
+ Results file id is  1
+
+ --------------------------------------------------
+ Running ADF single point job
+
+   Molecule
+   ========
+
+  Cartesian coordinates: 
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+  Bonds: 
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -1.93426        0.76250        0.00000)
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -0.59968        0.04071        0.00000)
+
+
+   Settings
+   ========
+
+   Relativistic options:  ZORA Scalar Relativistic 
+
+   XC functional   : GGA PBE
+   Integration     : accint 8.0    
+   SCF convergence : 1.0e-06 
+
+   TAPE21 will be saved
+
+
+   Options
+   =======
+
+   NOSYM
+   NOSYMFIT
+   NUCLEARMODEL gaussian
+
+   Output will be written to :  alloutput.161007.out
+
+ Running main job ...
+
+ Done with ADF single point job
+
+ Results file id is  2
+
+ --------------------------------------------------
+ Running ADF NewFDE job
+
+   Total Molecule
+   ==============
+
+  Cartesian coordinates: 
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+    4)        O        1.35062        0.11147        0.00000    
+    5)        H        1.68040       -0.37374       -0.75856    
+    6)        H        1.68040       -0.37374        0.75856    
+  Bonds: 
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -1.93426        0.76250        0.00000)
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -0.59968        0.04071        0.00000)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374        0.75856)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374       -0.75856)
+
+
+   Fragments 
+   ==========
+
+     Fragment Typ  1     type: nonfrozen fragment
+
+     Fragment Typ  1 , Fragment  1
+  Cartesian coordinates: 
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+  Bonds: 
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -1.93426        0.76250        0.00000)
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -0.59968        0.04071        0.00000)
+
+     Fragment Typ  2     type: frozen FDE fragment
+
+     Fragment Typ  2 , Fragment  1
+  Cartesian coordinates: 
+    1)        O        1.35062        0.11147        0.00000    
+    2)        H        1.68040       -0.37374       -0.75856    
+    3)        H        1.68040       -0.37374        0.75856    
+  Bonds: 
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374        0.75856)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374       -0.75856)
+
+
+   Fragment Files 
+   ============== 
+
+     Fragment Typ  2 :  t21.results.0001
+
+   Settings
+   ========
+
+   Relativistic options:  ZORA Scalar Relativistic 
+
+   XC functional   : GGA PBE
+   Integration     : accint 8.0    
+   SCF convergence : 1.0e-06 
+
+   TAPE21 will be saved
+
+
+   FDE settings
+   ============
+
+   FULLGRID  
+   GGAPOTXFD  PBEX
+   GGAPOTCFD  PBEC
+   TNAD  PW91k
+   ENERGY  
+
+   Options
+   =======
+
+   NOSYM
+   NOSYMFIT
+   NUCLEARMODEL gaussian
+   QTENS
+   ALLOW POSHOMO
+
+   Output will be written to :  alloutput.161007.out
+
+ Running main job ...
+
+ Done with ADF NewFDE job
+
+ Results file id is  3
+
+ --------------------------------------------------
+ Running ADF NewFDE job
+
+   Total Molecule
+   ==============
+
+  Cartesian coordinates: 
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+    4)        O        1.35062        0.11147        0.00000    
+    5)        H        1.68040       -0.37374       -0.75856    
+    6)        H        1.68040       -0.37374        0.75856    
+  Bonds: 
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -1.93426        0.76250        0.00000)
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -0.59968        0.04071        0.00000)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374        0.75856)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374       -0.75856)
+
+
+   Fragments 
+   ==========
+
+     Fragment Typ  1     type: nonfrozen fragment
+
+     Fragment Typ  1 , Fragment  1
+  Cartesian coordinates: 
+    1)        O       -1.55101       -0.11452        0.00000    
+    2)        H       -1.93426        0.76250        0.00000    
+    3)        H       -0.59968        0.04071        0.00000    
+  Bonds: 
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -1.93426        0.76250        0.00000)
+(    O       -1.55101       -0.11452        0.00000)-1-(    H       -0.59968        0.04071        0.00000)
+
+     Fragment Typ  2     type: frozen FDE fragment
+        FDE options: 
+           RELAX     
+
+
+     Fragment Typ  2 , Fragment  1
+  Cartesian coordinates: 
+    1)        O        1.35062        0.11147        0.00000    
+    2)        H        1.68040       -0.37374       -0.75856    
+    3)        H        1.68040       -0.37374        0.75856    
+  Bonds: 
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374        0.75856)
+(    O        1.35062        0.11147        0.00000)-1-(    H        1.68040       -0.37374       -0.75856)
+
+
+   Fragment Files 
+   ============== 
+
+     Fragment Typ  2 :  t21.results.0001
+
+   Settings
+   ========
+
+   Relativistic options:  ZORA Scalar Relativistic 
+
+   XC functional   : GGA PBE
+   Integration     : accint 8.0    
+   SCF convergence : 1.0e-06 
+
+   TAPE21 will be saved
+
+
+   FDE settings
+   ============
+
+   FULLGRID  
+   GGAPOTXFD  PBEX
+   GGAPOTCFD  PBEC
+   TNAD  PW91k
+   ENERGY  
+   RELAXCYCLES  15
+
+   Options
+   =======
+
+   NOSYM
+   NOSYMFIT
+   NUCLEARMODEL gaussian
+   QTENS
+   ALLOW POSHOMO
+
+   Output will be written to :  alloutput.161007.out
+
+ Running main job ...
+
+ Done with ADF NewFDE job
+
+ Results file id is  4
+
+Dipole moment for an isolated h2o-1 molecule (in its dimer geometry):  [3.36488359e-01 6.12862631e-01 7.39526242e-12] 0.699160224913389
+Dipole moment for an isolated h2o-2 molecule (in its dimer geometry):  [ 3.92053450e-01 -5.76833811e-01  5.05655201e-11] 0.6974547680885752
+Dipole moment for a supermolecular system (water dimer):  [9.68815690e-01 1.89027790e-02 1.52082564e-11] 0.9690000803524736
+Dipole moment for a h2o-1 molecule with the h2o-2 included as a frozen environment (in their dimer geometries; FDE calculations):  [ 4.22419878e-01  6.23634566e-01 -3.05703171e-12] 0.7532321197113644
+Dipole moment for a h2o-1 molecule with the h2o-2 included as an environment, both subsystems are relaxed in the freeze-and-thaw cycles (in their dimer geometries; FNT calculations):  [ 4.34421085e-01  6.24357592e-01 -8.17731908e-13] 0.7606208528412284
+ **************************************************
+ Finished Execution of PyADF input
+ Saving results not requested (use -s or set pyadfenv.option['save_results'])
